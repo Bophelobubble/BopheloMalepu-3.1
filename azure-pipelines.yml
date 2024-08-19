@@ -1,69 +1,65 @@
-name: CI/CD Pipeline
+trigger:
+- main
 
-on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+pool:
+  vmImage: 'ubuntu-latest'
 
-jobs:
-build:
-    runs-on: ubuntu-latest
+variables:
+  buildConfiguration: 'Release'
+
+stages:
+- stage: Build
+  jobs:
+  - job: Build
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
+    - task: UseDotNet@2
+      inputs:
+        packageType: 'sdk'
+        version: '5.x'
+        installationPath: $(Agent.ToolsDirectory)/dotnet
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v2
-        with:
-          node-version: '14'
+    - script: dotnet build --configuration $(buildConfiguration)
+      displayName: 'Build the project'
 
-      - name: Install dependencies
-        run: npm install
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+        ArtifactName: 'drop'
 
-      - name: Build the project
-        run: npm run build
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v2
-        with:
-          name: build-artifacts
-          path: build/
-
-  test:
-    runs-on: ubuntu-latest
-    needs: build
+- stage: Test
+  dependsOn: Build
+  jobs:
+  - job: Test
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
+    - task: UseDotNet@2
+      inputs:
+        packageType: 'sdk'
+        version: '5.x'
+        installationPath: $(Agent.ToolsDirectory)/dotnet
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v2
-        with:
-          node-version: '14'
+    - script: dotnet test --configuration $(buildConfiguration) --collect:"Code Coverage"
+      displayName: 'Run unit tests'
 
-      - name: Install dependencies
-        run: npm install
+    - task: PublishTestResults@2
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '**/TestResults/*.xml'
+        failTaskOnFailedTests: true
 
-      - name: Run tests
-        run: npm test
+    - task: PublishCodeCoverageResults@1
+      inputs:
+        codeCoverageTool: 'Cobertura'
+        summaryFileLocation: '$(System.DefaultWorkingDirectory)/**/coverage.cobertura.xml'
 
-      - name: Code coverage
-        run: npm run coverage
-
-      - name: Code analysis
-        run: npm run lint
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-
-      - name: Deploy to staging
-        run: |
-          echo "Deploying to staging environment"
+- stage: Deploy
+  dependsOn: Test
+  jobs:
+  - deployment: Deploy
+    environment: 'staging'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - script: echo "Deploying to staging environment"
+            displayName: 'Deploy to staging'
           # Add your deployment script here
